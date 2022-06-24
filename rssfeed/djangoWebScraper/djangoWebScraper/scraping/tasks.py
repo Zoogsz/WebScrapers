@@ -9,14 +9,25 @@
 # -B calls for the worker to execute beat schedule
 # -l INFO - Ensure we have verbose console logging events (details)
 
+# tasks
+from __future__ import absolute_import, unicode_literals
 from celery import Celery
-import requests # pulling data
-from bs4 import BeautifulSoup #XML parsing
-import json #exporting to files
-from datetime import datetime
-from celery.schedules import crontab  # scheduler
+from celery import app, shared_task
 
-app = Celery('tasks') # app name defination
+# job model
+from .models import News
+
+# scraping
+import requests
+from bs4 import BeautifulSoup
+import json
+from datetime import datetime
+import lxml
+
+# logging
+from celery.utils.log import get_task_logger
+
+#app = Celery('tasks') # app name defination
 #hackernewsURL = "https://news.ycombinator.com/rss"
 
 #@app.task # registering the task to the app
@@ -25,18 +36,18 @@ app = Celery('tasks') # app name defination
 
 # Scheduled task execut
 
-app.conf.timezone = 'UTC'
+#app.conf.timezone = 'UTC'
 
-app.conf.beat_schedule = {
-    # executes every 1 minute
-    'scraping-task-one-min': {
-        'task': 'tasks.hackernews_rss',
-        'schedule': crontab(),
-    },
-}
+#app.conf.beat_schedule = {
+#   executes every 1 minute
+ #    'scraping-task-one-min': {
+#       'task': 'tasks.hackernews_rss',
+#       'schedule': crontab(),
+#   },
+#}
 
 
-@app.task
+@shared_task
 def hackernews_rss() :
     article_list = [] # empty list declaration
     try:
@@ -53,7 +64,8 @@ def hackernews_rss() :
         for a in articles:
             title = a.find('title').text
             link = a.find('link').text
-            published = a.find('pubDate').text
+            published_wrong = a.find('pubDate').text
+            published = datetime.strptime(published_wrong, '%a, %d %b %Y %H:%M:%S %z')
 
             article = {
                 'title' : title,
@@ -69,7 +81,7 @@ def hackernews_rss() :
             print("The scraping job failed. See exception")
             print(e)
 
-@app.task
+@shared_task
 def save_function(article_list):
 
     #timestamp and filename
@@ -82,6 +94,27 @@ def save_function(article_list):
         json.dump(article_list, outfile)
         outfile.close()
 
+
+@shared_task(serializer='json')
+def save_function(article_list):
+    print('starting')
+    new_count = 0
+
+    for article in article_list:
+        try:
+            News.objects.create(
+                title = article['title'],
+                link = article['link'],
+                published = article['published'],
+                source = article['source']
+            )
+            new_count += 1
+        except Exception as e:
+            print('failed at latest_article is none')
+            print(e)
+            break
+    return print('finished')
+    
 print('Starting scraping')
 hackernews_rss()
 print('Finished scraping')    
